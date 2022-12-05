@@ -27,6 +27,7 @@ runs:
           --check-redefined-labels \
           --check-use-before-definition \
           --compilation-cache "${{ steps.query-cache.outputs.cache-dir }}" \
+          --show-extractor-output \
           ${{ inputs.flags }} \
           swift/ql/test
       env:
