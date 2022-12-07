@@ -30,16 +30,23 @@ Signature getOriginal(const char* name) {
   return reinterpret_cast<Signature>(dlsym(getLibc(), name));
 }
 
-int openOriginal(const char* path, int flags, mode_t mode = 0) {
+namespace original {
+int open(const char* path, int flags, mode_t mode = 0) {
   static auto original = getOriginal<int (*)(const char*, int, ...)>("open");
   return original(path, flags, mode);
 }
 
-int renameOriginal(const char* oldpath, const char* newpath) {
+int rename(const char* oldpath, const char* newpath) {
   static auto original = getOriginal<int (*)(const char*, const char*)>("rename");
   return original(oldpath, newpath);
 }
 
+int stat(const char* path, struct stat* statbuf) {
+  static auto original = getOriginal<int (*)(const char*, struct stat*)>("stat");
+  return original(path, statbuf);
+}
+
+}  // namespace original
 auto& fileInterceptorInstance() {
   static std::weak_ptr<FileInterceptor> ret{};
   return ret;
@@ -63,7 +70,7 @@ class FileInterceptor {
     if (auto interceptor = fileInterceptorInstance().lock()) {
       return interceptor->openRedirected(path, flags, mode);
     } else {
-      return openOriginal(path, flags, mode);
+      return original::open(path, flags, mode);
     }
   }
 
@@ -71,7 +78,15 @@ class FileInterceptor {
     if (auto interceptor = fileInterceptorInstance().lock()) {
       return interceptor->renameRedirected(source, destination);
     } else {
-      return renameOriginal(source, destination);
+      return original::rename(source, destination);
+    }
+  }
+
+  static int stat(const char* path, struct stat* statbuf) {
+    if (auto interceptor = fileInterceptorInstance().lock()) {
+      return interceptor->statRedirected(path, statbuf);
+    } else {
+      return original::stat(path, statbuf);
     }
   }
 
@@ -82,30 +97,48 @@ class FileInterceptor {
     if (accessMode == O_RDONLY) {
       errno = 0;
       // first, try the same path underneath the artifact store
-      if (auto ret = openOriginal(redirectedPath(fsPath).c_str(), flags);
+      if (auto ret = original::open(redirectedPath(fsPath).c_str(), flags);
           ret >= 0 || errno != ENOENT) {
         return ret;
       }
       errno = 0;
       // then try to use the hash map
       if (auto hashed = hashPath(fsPath)) {
-        if (auto ret = openOriginal(hashed->c_str(), flags); ret >= 0 || errno != ENOENT) {
+        if (auto ret = original::open(hashed->c_str(), flags); ret >= 0 || errno != ENOENT) {
           return ret;
         }
       }
-      return openOriginal(path, flags, mode);
+      return original::open(path, flags, mode);
     } else {
       // when writing, redirect to the artifact store
       // we don't need to register swiftmodule files in the hash map, as Swift never writes those
       // files directly, but creates temporary files and then renames them
-      return openOriginal(store(fsPath).c_str(), flags, mode);
+      return original::open(store(fsPath).c_str(), flags, mode);
     }
   }
 
   int renameRedirected(const char* source, const char* destination) {
     auto redirectedSource = redirectedPath(source);
     auto redirectedDestination = store(destination);
-    return renameOriginal(redirectedSource.c_str(), redirectedDestination.c_str());
+    return original::rename(redirectedSource.c_str(), redirectedDestination.c_str());
+  }
+
+  int statRedirected(const char* path, struct stat* statbuf) {
+    errno = 0;
+    fs::path fsPath{path};
+    // first, try the same path underneath the artifact store
+    if (auto ret = original::stat(redirectedPath(path).c_str(), statbuf);
+        ret >= 0 || errno != ENOENT) {
+      return ret;
+    }
+    errno = 0;
+    // then try to use the hash map
+    if (auto hashed = hashPath(fsPath)) {
+      if (auto ret = original::stat(hashed->c_str(), statbuf); ret >= 0 || errno != ENOENT) {
+        return ret;
+      }
+    }
+    return original::stat(path, statbuf);
   }
 
   fs::path hashesPath() const { return config.getTempArtifactDir() / "hashes"; }
@@ -152,7 +185,7 @@ class FileInterceptor {
 };
 
 int openOriginal(const std::filesystem::path& path) {
-  return openOriginal(path.c_str(), O_RDONLY);
+  return original::open(path.c_str(), O_RDONLY);
 }
 
 std::shared_ptr<FileInterceptor> setupFileInterception(const SwiftExtractorConfiguration& config) {
@@ -179,4 +212,9 @@ int open(const char* path, int oflag, ...) {
 int rename(const char* source, const char* destination) {
   return codeql::FileInterceptor::rename(source, destination);
 }
+
+int stat(const char* path, struct stat* statbuf) {
+  return codeql::FileInterceptor::stat(path, statbuf);
+}
+
 }  // namespace codeql
