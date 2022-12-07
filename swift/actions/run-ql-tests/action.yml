@@ -29,6 +29,14 @@ runs:
           --compilation-cache "${{ steps.query-cache.outputs.cache-dir }}" \
           --show-extractor-output \
           ${{ inputs.flags }} \
-          swift/ql/test
+          /home/runner/work/codeql/codeql/swift/ql/test/extractor-tests/declarations/all.ql
       env:
         GITHUB_TOKEN: ${{ github.token }}
+    - name: Upload test logs
+      if: ${{ !success() }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: swift-ql-tests-logs-${{ runner.os }}
+        path: |
+          swift/ql/test/**/*.testproj/log
+        retention-days: 1

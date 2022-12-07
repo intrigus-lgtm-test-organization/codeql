@@ -17,7 +17,7 @@ for src in *.swift; do
   expected_status=${expected_status:-0}
   env+=($(sed -n '1 s=//codeql-extractor-env:==p' $src))
   echo -e "calling extractor with flags: ${opts[@]}\n" >> $QLTEST_LOG
-  env "${env[@]}" "$EXTRACTOR" "${opts[@]}" >> $QLTEST_LOG 2>&1
+  env "${env[@]}" strace -A -o "$CODEQL_EXTRACTOR_SWIFT_LOG_DIR"/strace.log -- "$EXTRACTOR" "${opts[@]}" >> $QLTEST_LOG 2>&1
   actual_status=$?
   if [[ $actual_status != $expected_status ]]; then
     FAILED=1
