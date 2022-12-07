@@ -1,9 +1,11 @@
 #include "swift/extractor/remapping/SwiftFileInterception.h"
 
-#include <fcntl.h>
-#include <filesystem>
-
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+#include <filesystem>
 #include <mutex>
 #include <optional>
 
@@ -46,7 +48,12 @@ int stat(const char* path, struct stat* statbuf) {
   return original(path, statbuf);
 }
 
+int symlink(const char* target, const char* linkpath) {
+  static auto original = getOriginal<int (*)(const char*, const char*)>("symlink");
+  return original(target, linkpath);
+}
 }  // namespace original
+
 auto& fileInterceptorInstance() {
   static std::weak_ptr<FileInterceptor> ret{};
   return ret;
@@ -87,6 +94,14 @@ class FileInterceptor {
       return interceptor->statRedirected(path, statbuf);
     } else {
       return original::stat(path, statbuf);
+    }
+  }
+
+  static int symlink(const char* target, const char* linkpath) {
+    if (auto interceptor = fileInterceptorInstance().lock()) {
+      return interceptor->symlinkRedirected(target, linkpath);
+    } else {
+      return original::symlink(target, linkpath);
     }
   }
 
@@ -139,6 +154,16 @@ class FileInterceptor {
       }
     }
     return original::stat(path, statbuf);
+  }
+
+  int symlinkRedirected(const char* target, const char* linkpath) {
+    errno = 0;
+    auto targetPath = redirectedPath(target);
+    struct stat ignore;
+    if (auto ret = original::stat(targetPath.c_str(), &ignore); errno == ENOENT) {
+      targetPath = target;
+    }
+    return original::symlink(targetPath.c_str(), store(linkpath).c_str());
   }
 
   fs::path hashesPath() const { return config.getTempArtifactDir() / "hashes"; }
@@ -215,6 +240,10 @@ int rename(const char* source, const char* destination) {
 
 int stat(const char* path, struct stat* statbuf) {
   return codeql::FileInterceptor::stat(path, statbuf);
+}
+
+int symlink(const char* target, const char* linkpath) {
+  return codeql::FileInterceptor::symlink(target, linkpath);
 }
 
 }  // namespace codeql
