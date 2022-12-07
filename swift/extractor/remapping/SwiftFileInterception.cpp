@@ -43,11 +43,6 @@ int rename(const char* oldpath, const char* newpath) {
   return original(oldpath, newpath);
 }
 
-int stat(const char* path, struct stat* statbuf) {
-  static auto original = getOriginal<int (*)(const char*, struct stat*)>("stat");
-  return original(path, statbuf);
-}
-
 int symlink(const char* target, const char* linkpath) {
   static auto original = getOriginal<int (*)(const char*, const char*)>("symlink");
   return original(target, linkpath);
@@ -86,14 +81,6 @@ class FileInterceptor {
       return interceptor->renameRedirected(source, destination);
     } else {
       return original::rename(source, destination);
-    }
-  }
-
-  static int stat(const char* path, struct stat* statbuf) {
-    if (auto interceptor = fileInterceptorInstance().lock()) {
-      return interceptor->statRedirected(path, statbuf);
-    } else {
-      return original::stat(path, statbuf);
     }
   }
 
@@ -138,29 +125,10 @@ class FileInterceptor {
     return original::rename(redirectedSource.c_str(), redirectedDestination.c_str());
   }
 
-  int statRedirected(const char* path, struct stat* statbuf) {
-    errno = 0;
-    fs::path fsPath{path};
-    // first, try the same path underneath the artifact store
-    if (auto ret = original::stat(redirectedPath(path).c_str(), statbuf);
-        ret >= 0 || errno != ENOENT) {
-      return ret;
-    }
-    errno = 0;
-    // then try to use the hash map
-    if (auto hashed = hashPath(fsPath)) {
-      if (auto ret = original::stat(hashed->c_str(), statbuf); ret >= 0 || errno != ENOENT) {
-        return ret;
-      }
-    }
-    return original::stat(path, statbuf);
-  }
-
   int symlinkRedirected(const char* target, const char* linkpath) {
     errno = 0;
     auto targetPath = redirectedPath(target);
-    struct stat ignore;
-    if (auto ret = original::stat(targetPath.c_str(), &ignore); errno == ENOENT) {
+    if (!fs::exists(targetPath)) {
       targetPath = target;
     }
     return original::symlink(targetPath.c_str(), store(linkpath).c_str());
@@ -236,10 +204,6 @@ int open(const char* path, int oflag, ...) {
 
 int rename(const char* source, const char* destination) {
   return codeql::FileInterceptor::rename(source, destination);
-}
-
-int stat(const char* path, struct stat* statbuf) {
-  return codeql::FileInterceptor::stat(path, statbuf);
 }
 
 int symlink(const char* target, const char* linkpath) {
